@@ -96,64 +96,52 @@ def run_simulation():
     # Deterministic Protection Costs (increasing with height)
     protection_costs = np.array([10, 20, 35, 60, 90])
     
-    # True Mean Damages (decreasing with height)
-    # Optimal Total Cost Check:
-    # Idx 0: 10 + 100 = 110
-    # Idx 1: 20 + 80  = 100
-    # Idx 2: 35 + 60  = 95  <-- True Optimal (Gap is 5 to next best)
-    # Idx 3: 60 + 45  = 105
-    # Idx 4: 90 + 35  = 125
-    true_mean_damages = np.array([100, 80, 60, 45, 35])
-    
+    # Load real damage curve data
+    data = np.load('varberg_sl_annual_2010_2200.npz')
+    sl = data['sl']  # shape (N_years, N_heights)
+
+    # Use all columns as candidates (or select a subset if desired)
+    num_candidates = sl.shape[1]
+    candidates = list(range(num_candidates))
+
+    # Protection costs: must be provided for each candidate
+    # For demonstration, use a simple increasing cost (replace with real data if available)
+    protection_costs = np.linspace(10, 90, num_candidates)
+
     # Parameters
-    d_max = 200.0  # Known upper bound on damage
+    d_max = np.max(sl)  # Known upper bound on damage
     delta = 0.05   # 95% confidence
-    
+
     # Initialize Selector
     selector = LeveeHeightSelector(candidates, protection_costs, d_max, delta)
-    
+
     print(f"Starting simulation with {len(candidates)} candidates.")
     print(f"Target Delta: {delta}, D_max: {d_max}")
     print("-" * 50)
 
-    # 2. Monte Carlo Loop
-    max_iterations = 1000000
-    np.random.seed(42) 
+    # Monte Carlo Loop
+    max_iterations = 10000000
+    np.random.seed(42)
 
     for s in range(1, max_iterations + 1):
-        # Simulate common random numbers (CRN) flood damages
-        # We draw from a bounded distribution [0, D_max] centered around true_mean_damages
-        # (Using a clipped normal distribution for demonstration)
-        noise = np.random.normal(0, 20) # Shared noise factor (CRN)
-        
-        # Generate damages for this scenario
-        # Note: In reality, D(F|h) is monotonic in h. We simulate this by adding noise
-        # but keeping the relative order roughly consistent or just assuming independent noise 
-        # bounded by D_max for the sake of the bandit algorithm test.
-        
-        damages = true_mean_damages + np.random.uniform(-30, 30, size=len(candidates))
-        damages = np.clip(damages, 0, d_max) # Enforce boundedness assumption
-        
+        # Sample a random year/scenario from the damage curve
+        damages = sl[np.random.randint(sl.shape[0])]
+        damages = np.clip(damages, 0, d_max)  # Enforce boundedness assumption
+
         # Update Algorithm
         selector.update(damages)
-        
+
         # Check Stopping Rule
         should_stop, best_idx = selector.check_stopping_condition()
-        
+
         if should_stop:
             print(f"\nStopping condition met at sample size S = {s}")
             print(f"Selected Height Index: {best_idx}")
             print(f"Selected Height Value: {candidates[best_idx]}")
             print(f"Estimated Means: {np.round(selector.empirical_means, 2)}")
             print(f"Final Confidence Radius r(S): {selector.calculate_radius(s):.4f}")
-            
-            # Verification
-            if best_idx == 2:
-                print("\nSUCCESS: Algorithm selected the true optimal height.")
-            else:
-                print("\nFAILURE: Algorithm selected a suboptimal height.")
             break
-            
+
         if s % 5000 == 0:
             # Print status occasionally
             r = selector.calculate_radius(s)
