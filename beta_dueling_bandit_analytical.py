@@ -256,7 +256,7 @@ def run_beta_dueling_bandit_analytical(
         total_costs = np.empty(num_cands, dtype=float)
         for c in range(num_cands):
             h = cand_heights[c]
-            exceedances = maxima_m - h
+            exceedances = np.where(maxima_m > h, maxima_m, 0)
             yearly_damage = _interpolate_damage(exceedances, height_grid_m, damage_grid)
             total_damage = float(np.sum(yearly_damage))
             total_costs[c] = cand_protections[c] + total_damage

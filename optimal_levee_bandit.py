@@ -829,7 +829,13 @@ def run_bandit_from_candidates(
 
         # --- Accumulate damage for all candidates (vectorised) ---
         # exceedances: shape (C, n_years)
-        exceedances = maxima_m[None, :] - candidate_heights[:, None]
+        exceedances = np.where(
+    maxima_m[None, :] >= candidate_heights[:, None],
+    maxima_m[None, :],
+    0
+)
+
+
 
         # Flatten, interpolate, then reshape
         flat_exceed = exceedances.ravel()
@@ -1127,7 +1133,12 @@ def run_bandit_from_candidates_eff(
 
         # Vectorised damage for all scenarios and candidates:
         # exceedances shape: (this_chunk, C, n_years)
-        exceedances = maxima_batch_m[:, None, :] - cand_heights[None, :, None]
+        exceedances = np.where(
+        maxima_batch_m[:, None, :] >= height_grid[None, :, None],
+        maxima_batch_m[:, None, :],
+        0.0,
+        )
+
 
         # Flatten, interpolate damage for all entries at once, and reshape
         flat = exceedances.reshape(-1)
