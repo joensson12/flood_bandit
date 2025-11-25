@@ -104,7 +104,7 @@ def run_varberg_simulation():
     # A tighter bound might be needed for efficiency, but let's be safe.
     # Let's assume a max of 10 catastrophic floods in 91 years for the bound? 
     # Or just use the theoretical max: 91 * max_event_damage.
-    d_max = 91 * max_event_damage
+    d_max = 75 * max_event_damage
     print(f"Using D_max (horizon): {d_max:.2f} M€")
     
     delta = 0.05
