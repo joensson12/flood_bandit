@@ -76,6 +76,7 @@ def _interpolate_damage(
     """
     w = np.asarray(exceedances_m, dtype=float)
     w[w < 0.0] = 0.0
+    w[w>12.0]=12.0
     return np.interp(w, height_grid_m, damage_grid)
 
 

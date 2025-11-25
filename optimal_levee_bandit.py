@@ -72,7 +72,6 @@ from typing import Callable, Iterable, List, Sequence, Tuple, Dict, Optional
 
 import numpy as np
 
-
 def load_cost_curves(
     damage_file: str,
     protection_file: str,
@@ -834,6 +833,11 @@ def run_bandit_from_candidates(
     maxima_m[None, :],
     0
 )
+        exceedances = np.where(
+    maxima_m[None, :] < 12,
+    12,
+    maxima_m[None, :]
+)
 
 
 
@@ -926,17 +930,14 @@ def simulate_annual_max_pp_eff(
         if N <= 0:
             maxima_cm[j] = u_cm
         else:
-            # The maximum of N i.i.d. Uniform(0,1) is distributed as U_max ~ Beta(N,1).
-            # We can draw U_max via rng.random()**(1/N) or rng.beta(a=N, b=1).
-            U_max = rng.random() ** (1.0 / N)
+            U = rng.uniform(size=N)
             if abs(xi) < 1e-6:
-                # GPD with xi≈0 becomes exponential; invert CDF of max.
-                # Solve (1 - exp(-z/sigma))^N = U_max -> z = -sigma * log(1 - U_max^(1/N)).
-                z_max = -sigma * math.log(1.0 - U_max)
+                # Approximate GPD with xi ~ 0 by exponential
+                Z = -sigma * np.log(1.0 - U)
             else:
-                # Inverse CDF for the maximum of N GPD exceedances: see derivation.
-                z_max = (sigma / xi) * ((1.0 - U_max) ** (-xi) - 1.0)
-            maxima_cm[j] = u_cm + z_max
+                # Inverse CDF for GPD: z = sigma/xi * ((1 - U)^(-xi) - 1)
+                Z = sigma / xi * ((1.0 - U) ** (-xi) - 1.0)
+            maxima_cm[j] = u_cm + Z.max()
 
     return maxima_cm
 
@@ -983,10 +984,19 @@ def simulate_annual_max_pp_batch_eff(
     xi_bt    = np.broadcast_to(xi_bt,    (B, T))        # (B, T)
 
     # Poisson intensities λ_{b,t} = exp(η0_b + η1_b * X_{b,t})
-    lam_bt = np.exp(eta0_batch[:, None] + eta1_batch[:, None] * X_batch_cm)  # (B, T)
+    # work on the log scale and clip to avoid overflow / huge λ
+    log_lam_bt = eta0_batch[:, None] + eta1_batch[:, None] * X_batch_cm  # (B, T)
+
+    # Maximum *plausible* expected number of storms per year.
+    # Adjust this if you want a different physical cap.
+    max_lam = 1e5
+    log_lam_bt = np.clip(log_lam_bt, a_min=-np.inf, a_max=max_lam)
+
+    lam_bt = np.exp(log_lam_bt)  # (B, T), now safely bounded
 
     # Draw N_{b,t} ~ Poisson(λ_{b,t})
     N_bt = rng.poisson(lam_bt)  # (B, T)
+
 
     # Initialise maxima at the threshold u_cm
     maxima_cm = np.full((B, T), u_cm, dtype=float)
