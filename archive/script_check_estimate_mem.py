@@ -1,10 +1,19 @@
 import os
+import sys
 import numpy as np
-from beta_dueling_bandit_analytical import (
-    simulate_annual_max_pp,
+import psutil
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+from bandit_dueling import (
     _interpolate_damage,
 )
-from optimal_levee_bandit import load_cost_curves
+from bandit_cpu import load_cost_curves
+
+# ---------------------------
+# 0. Process handle for memory diagnostics
+# ---------------------------
+
+process = psutil.Process(os.getpid())
+
 
 # ---------------------------
 # 1. Paths and data loading
@@ -12,16 +21,15 @@ from optimal_levee_bandit import load_cost_curves
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-damage_file     = os.path.join(script_dir, "data", "Damage_cost_curves.tab")
-protection_file = os.path.join(script_dir, "data", "Protection_cost_curves_high_estimate.tab")
-pp_file         = os.path.join(script_dir, "data", "pp_inputs_halmsdad_pp_mixture_2025_2100.npz")
+damage_file     = os.path.join(script_dir, "../data", "Damage_cost_curves.tab")
+protection_file = os.path.join(script_dir, "../data", "Protection_cost_curves_high_estimate.tab")
+pp_file         = os.path.join(script_dir, "../data", "pp_inputs_halmsdad_pp_mixture_2025_2100.npz")
 
 print("Using paths:")
 print("  damage_file     =", damage_file)
 print("  protection_file =", protection_file)
 print("  pp_file         =", pp_file)
 
-# City name (was missing in your snippet)
 city = "Halmstad"
 
 # Load cost curves
@@ -46,9 +54,86 @@ X_future_paths = pp["X_future_paths"] # shape (M_pred, T_future) in cm
 # Analysis horizon
 years_range = (2025, 2100)
 
+# --- Log shapes and approximate sizes of big arrays ---
+print("\n[Diagnostics] Array shapes and approximate sizes")
+print("  heights.shape:", heights.shape)
+print("  damage_costs.shape:", damage_costs.shape)
+print("  protection_costs.shape:", protection_costs.shape)
+print("  years_future.shape:", years_future.shape)
+print("  X_future_paths.shape:", X_future_paths.shape)
+print("  X_future_paths approx size (MB):",
+      X_future_paths.size * 8 / 1e6)
+
+for name, arr in posterior_params.items():
+    a = np.asarray(arr)
+    print(f"  {name}.shape: {a.shape}, approx size (MB): {a.size * 8 / 1e6:.2f}")
+
+print("[Diagnostics] Initial RSS (MB):", process.memory_info().rss / 1e6)
+
 
 # -----------------------------------------------
-# 2. Monte Carlo estimator for a fixed height
+# 2. Capped version of simulate_annual_max_pp
+# -----------------------------------------------
+
+def simulate_annual_max_pp_capped(
+    eta0: float,
+    eta1: float,
+    alpha0: float,
+    xi: float,
+    X_t_series_cm: np.ndarray,
+    u_cm: float,
+    rng: np.random.Generator,
+    lam_cap: float = 10_000.0,
+    N_max: int = 100_000,
+) -> np.ndarray:
+    """
+    Safe wrapper for the Poisson–GPD point process simulator.
+
+    - Caps the intensity: lam = min(exp(eta0 + eta1 * X_t), lam_cap)
+    - Caps the number of exceedances per year: N <= N_max
+
+    This prevents occasional insane Poisson draws from making a single
+    simulation run take forever.
+    """
+    X_t_series_cm = np.asarray(X_t_series_cm, dtype=float)
+    T = X_t_series_cm.size
+    maxima_cm = np.empty(T, dtype=float)
+
+    # Convert parameters to floats
+    eta0   = float(eta0)
+    eta1   = float(eta1)
+    alpha0 = float(alpha0)
+    xi     = float(xi)
+    u_cm   = float(u_cm)
+
+    for j in range(T):
+        lam_raw = np.exp(eta0 + eta1 * X_t_series_cm[j])
+        lam = min(lam_raw, lam_cap)
+
+        N = rng.poisson(lam)
+        if N > N_max:
+            # Optional: log occasionally
+            # print(f"[simulate_capped] Clipping N from {N} to {N_max} (lam_raw={lam_raw:.2e}, lam={lam:.2e})")
+            N = N_max
+
+        if N <= 0:
+            maxima_cm[j] = u_cm
+        else:
+            # Standard GPD exceedance simulation
+            U = rng.uniform(size=N)
+            # sigma_t = exp(alpha0 + alpha1 * X_t); here alpha1=0 in your model
+            sigma = np.exp(alpha0)
+            if abs(xi) < 1e-8:
+                Z = -sigma * np.log(1.0 - U)
+            else:
+                Z = sigma / xi * ((1.0 - U) ** (-xi) - 1.0)
+            maxima_cm[j] = u_cm + Z.max()
+
+    return maxima_cm
+
+
+# -----------------------------------------------
+# 3. Monte Carlo estimator for a fixed height
 # -----------------------------------------------
 
 def estimate_mean_total_cost_for_height(
@@ -65,7 +150,8 @@ def estimate_mean_total_cost_for_height(
 ) -> float:
     """
     Monte Carlo estimator of E[total_cost | height = target_height],
-    using the same Poisson–GPD + MSL model as the dueling bandit.
+    using the *capped* Poisson–GPD + MSL model.
+    Prints memory diagnostics every 10k replications.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -92,6 +178,10 @@ def estimate_mean_total_cost_for_height(
     # Slice paths to the analysis years
     X_paths_slice_cm = np.asarray(X_pred_paths_cm, dtype=float)[:, year_idx]
     M_pred = X_paths_slice_cm.shape[0]
+
+    print("\n[Diagnostics] X_paths_slice_cm.shape:", X_paths_slice_cm.shape)
+    print("[Diagnostics] X_paths_slice_cm approx size (MB):",
+          X_paths_slice_cm.size * 8 / 1e6)
 
     # Flatten posterior parameter draws
     eta0_s   = np.asarray(posterior_params["eta0"]).reshape(-1)
@@ -123,7 +213,7 @@ def estimate_mean_total_cost_for_height(
         X_t_series_cm = X_paths_slice_cm[m_path]  # (n_years,)
 
         # 2. Simulate annual maxima (cm) and convert to metres
-        maxima_cm = simulate_annual_max_pp(
+        maxima_cm = simulate_annual_max_pp_capped(
             eta0=eta0,
             eta1=eta1,
             alpha0=alpha0,
@@ -131,6 +221,8 @@ def estimate_mean_total_cost_for_height(
             X_t_series_cm=X_t_series_cm,
             u_cm=u_cm,
             rng=rng,
+            lam_cap=10_000_000.0,
+            N_max=100_000,
         )
         maxima_m = maxima_cm * 0.01  # cm -> m
 
@@ -141,22 +233,27 @@ def estimate_mean_total_cost_for_height(
 
         total_cost_sum += total_damage
 
-        # Progress print every 10k reps
-        if (r + 1) % 10_000 == 0:
+        # Progress + memory diagnostics every 10k reps
+        if (r + 1) % 10_000 == 0 or (r + 1) == n_replications:
             approx_mean = prot_cost + total_cost_sum / (r + 1)
-            print(f"[Estimation] Replication {r+1}, running mean ≈ {approx_mean:.3f}")
+            rss_mb = process.memory_info().rss / 1e6
+            print(
+                f"[Estimation] Rep {r+1}/{n_replications}, "
+                f"running mean ≈ {approx_mean:.3f}, "
+                f"RSS ≈ {rss_mb:.1f} MB"
+            )
 
     mean_cost = prot_cost + total_cost_sum / n_replications
     return mean_cost
 
 
 # ---------------------------
-# 3. Entry point
+# 4. Entry point
 # ---------------------------
 
 def main():
     best_height = 2.5
-    print(f"Starting Monte Carlo estimation for height {best_height:.2f} m")
+    print(f"\nStarting Monte Carlo estimation for height {best_height:.2f} m")
 
     rng = np.random.default_rng(2024)
     mean_best = estimate_mean_total_cost_for_height(
@@ -168,11 +265,11 @@ def main():
         X_pred_paths_cm=X_future_paths,
         posterior_params=posterior_params,
         years_range=years_range,
-        n_replications=200_000,
+        n_replications=1_000_000,
         rng=rng,
     )
 
-    print(f"[Estimation] Mean total cost for best height {best_height:.2f} m ≈ {mean_best:.3f}")
+    print(f"\n[Estimation] Mean total cost for best height {best_height:.2f} m ≈ {mean_best:.3f}")
 
 
 if __name__ == "__main__":
