@@ -1,0 +1,3 @@
+bandit_cpu
+bandit_dueling
+bandit_gpu

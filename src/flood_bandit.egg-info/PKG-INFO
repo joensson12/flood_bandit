@@ -1,3 +1,17 @@
+Metadata-Version: 2.4
+Name: flood_bandit
+Version: 0.1.0
+Summary: Optimal levee height selection using multi-armed bandit algorithms
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: matplotlib
+Requires-Dist: pandas
+Requires-Dist: jupyter
+Provides-Extra: gpu
+Requires-Dist: cupy; extra == "gpu"
+
 # Flood Bandit: Optimal Levee Height Selection
 
 This repository implements a risk-neutral levee height selection algorithm using multi-armed bandit frameworks. The goal is to identify the optimal levee design height from a discrete set of candidates by balancing expected flood damage costs against construction (protection) costs.
@@ -71,3 +85,7 @@ The algorithm proceeds in three main stages (as implemented in `src/bandit_cpu.p
 1.  **Data Ingestion**: Loading damage and protection cost curves.
 2.  **Pruning**: Using distribution-free lower bounds to remove suboptimal levee heights before simulation.
 3.  **Pure Exploration**: Sampling flood scenarios and updating confidence intervals for the mean total cost of each surviving candidate height until an optimal one is identified.
+
+## License
+
+[Insert License Information Here]
