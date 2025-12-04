@@ -19,9 +19,9 @@ process = psutil.Process(os.getpid())
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-damage_file     = os.path.join(script_dir, "Damage_cost_curves.tab")
-protection_file = os.path.join(script_dir, "Protection_cost_curves_high_estimate.tab")
-pp_file         = os.path.join(script_dir, "pp_inputs_halmsdad_pp_mixture_2025_2100.npz")
+damage_file     = os.path.join(script_dir, "data", "Damage_cost_curves.tab")
+protection_file = os.path.join(script_dir, "data", "Protection_cost_curves_high_estimate.tab")
+pp_file         = os.path.join(script_dir, "data", "pp_inputs_halmsdad_pp_mixture_2025_2100.npz")
 
 print("Using paths:")
 print("  damage_file     =", damage_file)

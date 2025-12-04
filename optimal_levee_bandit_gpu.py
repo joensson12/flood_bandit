@@ -39,10 +39,10 @@ demonstration)::
 
     # Load cost curves for a city
     heights, damage_costs, protection_costs = load_cost_curves(
-        'Damage_cost_curves.tab', 'Protection_cost_curves_high_estimate.tab', 'Halmstad'
+        'data/Damage_cost_curves.tab', 'data/Protection_cost_curves_high_estimate.tab', 'Halmstad'
     )
     # Load predictive posterior and latent MSL paths from NPZ
-    pp = np.load('pp_inputs_halmsdad_pp_mixture_2025_2100.npz')
+    pp = np.load('data/pp_inputs_halmsdad_pp_mixture_2025_2100.npz')
     posterior_params = {
         'eta0': pp['eta0'],
         'eta1': pp['eta1'],

@@ -39,8 +39,8 @@ Example usage::
 
     from optimal_levee_bandit import run_bandit
     best_height, history = run_bandit(
-        damage_file='Damage_cost_curves.tab',
-        protection_file='Protection_cost_curves_high_estimate.tab',
+        damage_file='data/Damage_cost_curves.tab',
+        protection_file='data/Protection_cost_curves_high_estimate.tab',
         city='Halmstad',
         years_range=(2025, 2100),
         delta=0.05,
