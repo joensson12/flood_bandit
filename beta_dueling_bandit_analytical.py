@@ -2,6 +2,7 @@ import math
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+from scipy.stats import beta as beta_dist
 
 
 def simulate_annual_max_pp(
@@ -76,7 +77,6 @@ def _interpolate_damage(
     """
     w = np.asarray(exceedances_m, dtype=float)
     w[w < 0.0] = 0.0
-    w[w>12.0]=12.0
     return np.interp(w, height_grid_m, damage_grid)
 
 
@@ -90,7 +90,7 @@ def run_beta_dueling_bandit_analytical(
     posterior_params: Dict[str, np.ndarray],
     years_range: Tuple[int, int] = (2025, 2100),
     delta: float = 0.05,
-    max_rounds: int = 100000,
+    max_rounds: int = 1000000000000000000,
     check_every: int = 1000,
     rng: Optional[np.random.Generator] = None,
     verbose: bool = False,
@@ -139,8 +139,8 @@ def run_beta_dueling_bandit_analytical(
         Inclusive range of years over which to compute damages.
 
     delta : float
-        Target misselection probability. The stopping rule uses
-        q_best >= 1 - delta.
+        Confidence threshold. The stopping rule uses
+        min_{j!=i*} P(p_{i*j} > 0.5) >= 1 - delta.
 
     max_rounds : int
         Maximum number of simulated scenarios.
@@ -286,21 +286,25 @@ def run_beta_dueling_bandit_analytical(
 
         # --- 5. Check stopping rule every 'check_every' rounds ---
         if round_idx % check_every == 0 or round_idx == max_rounds:
-            # Posterior predictive probability that i beats j:
-            # P(X_ij = 1 | data) = alpha_ij / (alpha_ij + beta_ij)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                p_pred = alpha / (alpha + beta)
-                p_pred[np.isnan(p_pred)] = 0.5  # if alpha=beta=0 just treat as 0.5
+            # Compute P(p_ij > 0.5) for all pairs
+            # This is 1 - CDF(0.5) for Beta(alpha, beta), or survival function sf(0.5)
+            # Avoid issues with 0 parameters on diagonal by temporarily setting them to 1
+            alpha_safe = alpha.copy()
+            beta_safe = beta.copy()
+            np.fill_diagonal(alpha_safe, 1.0)
+            np.fill_diagonal(beta_safe, 1.0)
+            
+            prob_better = beta_dist.sf(0.5, alpha_safe, beta_safe)
 
-            # For each candidate i, compute q_i = min_{j != i} P(X_ij = 1 | data)
-            q = np.empty(num_cands, dtype=float)
+            # For each candidate i, compute min_j P(p_ij > 0.5)
+            min_probs = np.empty(num_cands, dtype=float)
             for i in range(num_cands):
                 mask_j = np.ones(num_cands, dtype=bool)
                 mask_j[i] = False
-                q[i] = float(np.min(p_pred[i, mask_j]))
+                min_probs[i] = float(np.min(prob_better[i, mask_j]))
 
-            best_loc = int(np.argmax(q))
-            q_best = float(q[best_loc])
+            best_loc = int(np.argmax(min_probs))
+            confidence_best = float(min_probs[best_loc])
 
             best_global_index = int(cand_idx[best_loc])
             best_height = float(cand_heights[best_loc])
@@ -308,28 +312,31 @@ def run_beta_dueling_bandit_analytical(
             history["rounds"].append(round_idx)
             history["best_index"].append(best_global_index)
             history["best_height"].append(best_height)
-            history["min_pair_prob"].append(q_best)
+            history["min_pair_prob"].append(confidence_best)
 
             if verbose:
                 print(
                     f"Round {round_idx}: best height {best_height:.2f} m, "
-                    f"min pairwise win prob q_best = {q_best:.4f}"
+                    f"min confidence P(p > 0.5) = {confidence_best:.4f}"
                 )
 
-            # Stopping condition: q_best >= 1 - delta
-            if q_best >= 1.0 - delta:
+            # Stopping condition: confidence_best >= 1 - delta
+            if confidence_best >= 1.0 - delta:
                 return best_height, history
 
     # If max_rounds reached without meeting stopping rule, return current best
-    # based on q_i.
-    with np.errstate(divide="ignore", invalid="ignore"):
-        p_pred = alpha / (alpha + beta)
-        p_pred[np.isnan(p_pred)] = 0.5
-    q = np.empty(num_cands, dtype=float)
+    alpha_safe = alpha.copy()
+    beta_safe = beta.copy()
+    np.fill_diagonal(alpha_safe, 1.0)
+    np.fill_diagonal(beta_safe, 1.0)
+    prob_better = beta_dist.sf(0.5, alpha_safe, beta_safe)
+    
+    min_probs = np.empty(num_cands, dtype=float)
     for i in range(num_cands):
         mask_j = np.ones(num_cands, dtype=bool)
         mask_j[i] = False
-        q[i] = float(np.min(p_pred[i, mask_j]))
-    best_loc = int(np.argmax(q))
+        min_probs[i] = float(np.min(prob_better[i, mask_j]))
+        
+    best_loc = int(np.argmax(min_probs))
     best_height = float(cand_heights[best_loc])
     return best_height, history
